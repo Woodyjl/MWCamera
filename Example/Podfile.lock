@@ -1,0 +1,16 @@
+PODS:
+  - MWCamera (0.1.2)
+
+DEPENDENCIES:
+  - MWCamera (from `../`)
+
+EXTERNAL SOURCES:
+  MWCamera:
+    :path: "../"
+
+SPEC CHECKSUMS:
+  MWCamera: c76e1d0cf62e953ca277168a2d9dad8201f28193
+
+PODFILE CHECKSUM: 64bb6f27b11bec08511090419405c2782cb23fa4
+
+COCOAPODS: 1.6.1

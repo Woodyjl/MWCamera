@@ -1,0 +1,12 @@
+platform :ios, '11.2'
+use_frameworks!
+
+target 'MWCamera_Example' do
+  pod 'MWCamera', :path => '../'
+
+  target 'MWCamera_Tests' do
+    inherit! :search_paths
+
+    
+  end
+end

@@ -1,0 +1,6 @@
+framework module MWCamera {
+  umbrella header "MWCamera-umbrella.h"
+
+  export *
+  module * { export * }
+}

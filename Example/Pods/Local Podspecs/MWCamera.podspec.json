@@ -1,0 +1,24 @@
+{
+  "name": "MWCamera",
+  "version": "0.1.2",
+  "summary": "A framework that allows simple capture of photos and video",
+  "platforms": {
+    "ios": "11.2"
+  },
+  "swift_version": "4.2",
+  "description": "Also MWCamera was inspired by SwiftyCam.",
+  "homepage": "https://github.com/Woodyjl/MWCamera",
+  "license": {
+    "type": "MIT",
+    "file": "LICENSE"
+  },
+  "authors": {
+    "Woody Jean-Louis": "woodyjeanlouis@gmail.com"
+  },
+  "social_media_url": "https://twitter.com/",
+  "source": {
+    "git": "https://github.com/Woodyjl/MWCamera.git",
+    "tag": "0.1.2"
+  },
+  "source_files": "MWCamera/Classes/*.swift"
+}
