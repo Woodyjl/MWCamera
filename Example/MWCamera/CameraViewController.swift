@@ -51,14 +51,24 @@ extension CameraViewController {
         self.view.addSubview(self.blurView!)
 
         self.view.bringSubviewToFront(self.captureButton)
+
     }
 }
 
 extension CameraViewController {
     @objc func handleLongPress(_ sender: UILongPressGestureRecognizer) {
-        if sender.state == .began {
+        switch sender.state {
+        case .began:
             self.captureButton.changeToSquare()
-
+        case .ended:
+            if self.recordingDuration <= self.photoCaptureThreshold {
+                // Flash the screen to signal that MWCamera took a photo.
+                DispatchQueue.main.async {
+                    //
+                }
+            }
+        default:
+            break
         }
     }
 }
@@ -140,7 +150,7 @@ extension CameraViewController: MWCameraDelegate {
         }
     }
 
-    func mwCamera(_ mwCamera: MWCamera, didFailToRecordVideo error: Error) {
+    func mwCamera(_ mwCamera: MWCamera, didFailToProcessVideo error: Error) {
 
     }
 
@@ -155,6 +165,34 @@ extension CameraViewController: MWCameraDelegate {
     func mwCamera(_ mwCamera: MWCamera, didCancelRecordingAt url: URL) {
         captureButton.changeToCircle()
         captureButton.progress = 0
+    }
+
+    func mwCamera(_ mwCamera: MWCamera, willCaptureImageAt location: MWCameraLocation) {
+        captureButton.changeToCircle()
+        captureButton.progress = 0
+
+        self.flashPreview()
+        //Play capture sound
+    }
+
+    func mwCamera(_ mwCamera: MWCamera, didCaptureImageAt location: MWCameraLocation) {
+
+    }
+
+    func mwCamera(_ mwCamera: MWCamera, didFinishProcessing image: UIImage, with properties: CFDictionary) {
+        let imageView = UIImageView.init(image: image)
+        imageView.contentMode = .scaleAspectFill
+        imageView.sizeToFit()
+
+        imageView.center = self.view.center
+
+        self.view.addSubview(imageView)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            imageView.removeFromSuperview()
+        }
+
+        //self.save(cgImage: image.cgImage!, fileType: AVFileType.heic, quality: 1.0, properties: properties)
     }
 }
 

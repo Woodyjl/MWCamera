@@ -54,12 +54,12 @@ import AVFoundation
     @objc optional func mwCamera(_ mwCamera: MWCamera, didFinishProcessingVideoAt url: URL)
 
     /**
-     MWBaseCameraViewControllerDelegate function called when MWBaseCameraViewController fails to record a video.
+     MWBaseCameraViewControllerDelegate function called when MWBaseCameraViewController fails to process a video.
      
      - Parameter mwCamera: Current MWBaseCameraViewController session
      - Parameter error: An error object that describes the problem
      */
-    @objc optional func mwCamera(_ mwCamera: MWCamera, didFailToRecordVideo error: Error)
+    @objc optional func mwCamera(_ mwCamera: MWCamera, didFailToProcessVideo error: Error)
 
     /**
      MWBaseCameraViewControllerDelegate function called when MWBaseCameraViewController switches between front or rear camera.
@@ -97,13 +97,40 @@ import AVFoundation
      */
 
     @objc optional func mwCamera(_ mwCamera: MWCamera, didCancelRecordingAt url: URL)
-    
+
     /**
      MWBaseCameraViewControllerDelegate function called right before MWBaseCameraViewController
      checks for an asset writer and inputs or creates one.
      
      - Parameter mwCamera: Current MWBaseCameraViewController session
      */
-    
+
     @objc optional func mwCamera(shouldCreateAssetWriter mwCamera: MWCamera)
+
+    /**
+     MWBaseCameraViewControllerDelegate function called before MWBaseCameraViewController takes a photo.
+     
+     - Parameter mwCamera: Current MWBaseCameraViewController session
+     - Parameter camera: Current camera orientation
+     */
+
+    @objc optional func mwCamera(_ mwCamera: MWCamera, willCaptureImageAt location: MWCameraLocation)
+
+    /**
+     MWBaseCameraViewControllerDelegate function called after MWBaseCameraViewController captures the frame for an image.
+     
+     - Parameter mwCamera: Current MWBaseCameraViewController session
+     - Parameter camera: Current camera orientation
+     */
+
+    @objc optional func mwCamera(_ mwCamera: MWCamera, didCaptureImageAt location: MWCameraLocation)
+
+    /**
+     MWBaseCameraViewControllerDelegate function called after MWBaseCameraViewController finished processing image.
+     
+     - Parameter mwCamera: Current MWBaseCameraViewController session
+     - Parameter image: UIImage of the captured frame
+     */
+
+    @objc optional func mwCamera(_ mwCamera: MWCamera, didFinishProcessing image: UIImage, with properties: CFDictionary)
 }

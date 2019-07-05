@@ -26,6 +26,8 @@ open class MWCameraViewController: MWBaseCameraViewController {
     private var timePassed = 0.0
     //
     private var shouldStop = false
+    //
+    private var shouldCreateTimer = false
 
     // Public access to Pinch Gesture
     private(set) public var pinchGestureRecognizer: UIPinchGestureRecognizer!
@@ -33,6 +35,10 @@ open class MWCameraViewController: MWBaseCameraViewController {
     private(set) public var singleTapGestureRecognizer: UITapGestureRecognizer!
     // Public access to tap Gesture
     private(set) public var doubleTapGestureRecognizer: UITapGestureRecognizer!
+    //
+    private(set) public var isFlashLocked = false
+    //
+    private(set) public var isZoomLocked = false
 
     // Sets whether flash is enabled for video capture
     public var isFlashEnabled = false
@@ -46,9 +52,6 @@ open class MWCameraViewController: MWBaseCameraViewController {
     public var isTapToFocusEnabled = true
     //
     public var isPanToZoomEnabled = true
-
-    // allow background audio from other applications to continue playing during capture
-    public var allowsBackgroundAudio = true
 
     // Sets whether a double tap to switch cameras is supported
     public var isDoubleTapToSwitchCameraEnabled = true
@@ -77,7 +80,6 @@ open class MWCameraViewController: MWBaseCameraViewController {
     public var stopsRecordingOnTouchUp = true
     // distance in points for the full zoom range (e.g. min to max), could be UIScreen.main.bounds.height
     public var zoomPanMaxLength: CGFloat = UIScreen.main.bounds.height
-    
 
     public override init() {
         super.init()
@@ -113,6 +115,11 @@ extension MWCameraViewController {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    public override func capturePhoto(after deadline: TimeInterval = 0) {
+        let newDeadline = self.isFlashEnabled && deadline == 0 ? 1.2 : deadline
+        super.capturePhoto(after: newDeadline)
+    }
+
     public func focus(at point: CGPoint) {
         let screenSize = captureView.bounds.size
         let xPoint = point.y / screenSize.height
@@ -141,7 +148,7 @@ extension MWCameraViewController {
     }
 
     public func zoom(to factor: CGFloat, withRate rate: Float = Float.greatestFiniteMagnitude) {
-        guard let videoDevice = captureDevice else { return }
+        guard let videoDevice = captureDevice, !self.isZoomLocked else { return }
         do {
             try videoDevice.lockForConfiguration()
             let previousFactor = videoDevice.videoZoomFactor
@@ -161,6 +168,43 @@ extension MWCameraViewController {
         } catch {
             print("[mwCamera]: Error locking configuration")
         }
+    }
+
+    /// Freezes the live camera preview layer.
+    public func freezePreview() {
+        if let previewConnection = self.captureView.videoPreviewLayer.connection {
+            previewConnection.isEnabled = false
+        }
+    }
+
+    /// Un-freezes the live camera preview layer.
+    public func unfreezePreview() {
+        if let previewConnection = self.captureView.videoPreviewLayer.connection {
+            previewConnection.isEnabled = true
+        }
+    }
+
+    public func flashPreview() {
+        self.captureView.videoPreviewLayer.opacity = 0
+        UIView.animate(withDuration: 0.35) {
+            self.captureView.videoPreviewLayer.opacity = 1
+        }
+    }
+    /// Locks the flash at it's current state.
+    public func lockFlash() {
+        self.isFlashLocked = true
+    }
+    /// Unlocks the flash and allows variable states.
+    public func unlockFlash() {
+        self.isFlashLocked = false
+    }
+    /// Locks the zoom at it's current scale.
+    public func lockZoom() {
+        self.isZoomLocked = true
+    }
+    /// Unlocks the zoom and allows variable change in scale.
+    public func unlockZoom() {
+        self.isZoomLocked = false
     }
 }
 
@@ -206,11 +250,10 @@ internal extension MWCameraViewController {
         }
 
         self.delegate?.mwCamera?(self, willBeginRecordingVideoAt: self.cameraLocation)
-        self.setBackgroundAudioPreference()
     }
 
-    override func didBeginRecordingVideoAt() {
-        super.didBeginRecordingVideoAt()
+    override func didBeginRecordingVideo() {
+        super.didBeginRecordingVideo()
 
         self.startTimer()
         self.delegate?.mwCamera?(self, didBeginRecordingVideoAt: self.cameraLocation)
@@ -238,15 +281,14 @@ internal extension MWCameraViewController {
     override func didFinishProcessingVideoAt(_ url: URL) {
         super.didFinishProcessingVideoAt(url)
 
-        self.setPreviousBackgroundAudioPreference()
         self.delegate?.mwCamera?(self, didFinishProcessingVideoAt: url)
     }
 
-    override func didFailToRecordVideo(_ error: Error) {
-        super.didFailToRecordVideo(error)
+    override func didFailToProcessVideo(_ error: Error) {
+        super.didFailToProcessVideo(error)
 
         self.invalidateTimer()
-        self.delegate?.mwCamera?(self, didFailToRecordVideo: error)
+        self.delegate?.mwCamera?(self, didFailToProcessVideo: error)
     }
 
     override func didSwitchCamera() {
@@ -273,58 +315,92 @@ internal extension MWCameraViewController {
     }
 
     override func didCancelRecording(at url: URL) {
+        super.didCancelRecording(at: url)
+
+        if self.flashView?.superview != nil {
+            self.removeFrontCameraFlashView()
+        }
+
+        if self.captureDevice?.torchMode == .on {
+            self.setFlash(to: .off)
+        }
+
+        if self.shouldResetZoom {
+            self.zoom(to: self.startingZoomScale)
+            self.shouldResetZoom = false
+        }
+
         self.delegate?.mwCamera?(self, didCancelRecordingAt: url)
-        self.setPreviousBackgroundAudioPreference()
     }
-    
+
     override func shouldCreateAssetWriter() {
+        super.shouldCreateAssetWriter()
+
         self.delegate?.mwCamera?(shouldCreateAssetWriter: self)
     }
-}
 
-extension MWCameraViewController {
-    @objc open func setPreviousBackgroundAudioPreference() {}
-}
+    override func willCaptureImage() {
+        super.willCaptureImage()
 
-extension MWCameraViewController {
-    private func setBackgroundAudioPreference() {
-        let audioSession = AVAudioSession.sharedInstance()
-        do {
-            var options: AVAudioSession.CategoryOptions = [
-                .allowBluetooth, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
-
-            if allowsBackgroundAudio {
-                options.insert(.mixWithOthers)
+        //flip video output if front facing camera is selected
+        if self.cameraLocation == .front {
+            let connection = self.videoOutput?.connection(with: AVMediaType.video)
+            if connection?.isVideoMirroringSupported == true {
+                connection?.isVideoMirrored = true
             }
-
-            try audioSession.setActive(false)
-            try audioSession.setCategory(
-                AVAudioSession.Category.playAndRecord, mode: AVAudioSession.Mode.videoRecording, options: options)
-            try audioSession.setActive(true)
-
-        } catch {
-            print("[mwCamera]: Failed to set background audio preference \(error.localizedDescription)")
         }
+
+        if self.cameraLocation == .back && self.isFlashEnabled {
+            self.setFlash(to: .on)
+        }
+
+        if self.cameraLocation == .front && self.isFlashEnabled {
+            self.addFrontCameraFlashView()
+        }
+
+        self.delegate?.mwCamera?(self, willCaptureImageAt: self.cameraLocation)
     }
 
+    override func didCaptureImage() {
+        super.didCaptureImage()
+
+        if !self.shouldStartWritingSession {
+            if self.flashView?.superview != nil {
+                self.removeFrontCameraFlashView()
+            }
+
+            if self.captureDevice?.torchMode == .on {
+                self.setFlash(to: .off)
+            }
+        }
+
+        //self.delegate?.mwCamera?(self, didCaptureImageAt: self.cameraLocation)
+    }
+
+    override func didFinishProcessing(image: UIImage, with properties: CFDictionary) {
+        super.didFinishProcessing(image: image, with: properties)
+
+        self.delegate?.mwCamera?(self, didFinishProcessing: image, with: properties)
+    }
+}
+
+extension MWCameraViewController {
     private func setFlash(to torchMode: AVCaptureDevice.TorchMode) {
+        guard let device = self.captureDevice,
+            device.hasTorch, !self.isFlashLocked else { return }
         DispatchQueue.main.async {
-            if let device = self.captureDevice, device.hasTorch {
-                do {
-                    try device.lockForConfiguration()
-                    if torchMode == .on {
-                        try device.setTorchModeOn(level: 1.0)
-                    }
-                    device.torchMode = torchMode
-                    device.unlockForConfiguration()
-                } catch {
-                    print("[mwCamera]: Could not configure device Torch: \(error)")
-                }
+            do {
+                try device.lockForConfiguration()
+                device.torchMode = torchMode
+                device.unlockForConfiguration()
+            } catch {
+                print("[mwCamera]: Could not configure device Torch: \(error)")
             }
         }
     }
 
     private func addFrontCameraFlashView() {
+        guard flashView == nil, !self.isFlashLocked else { return }
         flashView = UIView(frame: view.frame)
         flashView?.backgroundColor = UIColor.white
         flashView?.alpha = 0.65
@@ -334,12 +410,14 @@ extension MWCameraViewController {
     }
 
     private func removeFrontCameraFlashView() {
+        guard flashView != nil, !self.isFlashLocked else { return }
         let previousScreenBrightness = self.previousScreenBrightness
-        UIView.animate(withDuration: 0.1, delay: 0.0, options: .curveEaseInOut, animations: {
-            self.flashView?.alpha = 0.0
+        UIView.animate(withDuration: 0.1, delay: 0.0, options: .curveEaseInOut, animations: { [weak self] in
+            self?.flashView?.alpha = 0.0
             UIScreen.main.brightness = previousScreenBrightness
-        }, completion: { (_) in
-            self.flashView?.removeFromSuperview()
+        }, completion: { [weak self] (_) in
+            self?.flashView?.removeFromSuperview()
+            self?.flashView = nil
         })
     }
 }
@@ -454,8 +532,25 @@ extension MWCameraViewController {
 
             if self.timePassed <= self.photoCaptureThreshold {
                 // Take photo and discard Video
-                //self.capturePhoto()()
+                self.capturePhoto()
+
+                let shouldUnlockFlash = self.isFlashLocked == false
+                let shouldUnlockZoom = self.isZoomLocked == false
+                self.lockFlash()
+                self.lockZoom()
+
                 self.cancel()
+
+                self.executeAsync {
+                    DispatchQueue.main.async { [weak self] in
+                        if shouldUnlockFlash {
+                            self?.unlockFlash()
+                        }
+                        if shouldUnlockZoom {
+                            self?.unlockZoom()
+                        }
+                    }
+                }
             } else if self.stopsRecordingOnTouchUp && self.isRecording {
                 self.stop()
             } else if self.shouldStop {
@@ -474,15 +569,18 @@ extension MWCameraViewController {
     }
 
     private func start() {
+        self.shouldCreateTimer = true
         self.startRecording()
     }
 
     private func stop() {
+        self.shouldCreateTimer = false
         self.invalidateTimer()
         self.stopRecording()
     }
 
     private func cancel() {
+        self.shouldCreateTimer = false
         self.invalidateTimer()
         self.cancelRecording()
     }
@@ -500,7 +598,8 @@ extension MWCameraViewController {
     }
 
     private func startTimer() {
-        timer = Timer.scheduledTimer(
+        guard self.shouldCreateTimer else { return }
+        self.timer = Timer.scheduledTimer(
             timeInterval: self.videoTimeInterval, target: self,
             selector: #selector(updateTimer), userInfo: nil, repeats: true)
     }

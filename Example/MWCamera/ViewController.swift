@@ -20,16 +20,24 @@ class ViewController: CameraViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        //            videoDevice.exposurePointOfInterest = focusPoint
-        //            videoDevice.exposureMode = AVCaptureDevice.ExposureMode.continuousAutoExposure
 
         observePermissions()
         handlePermissions()
     }
 
     override func setPreviousBackgroundAudioPreference() {
-        let appDelegate = UIApplication.shared.delegate as? AppDelegate
-        appDelegate?.setAppAudioSettings()
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            let options: AVAudioSession.CategoryOptions = [
+                .mixWithOthers
+            ]
+            try audioSession.setActive(false)
+            try audioSession.setCategory(AVAudioSession.Category.playback, options: options)
+            try audioSession.setActive(true)
+        } catch {
+            print(error)
+            print("Failed to set background audio preference \(error.localizedDescription)")
+        }
     }
 
     override func mwCamera(_ mwCamera: MWCamera, didSwitchCamera location: MWCameraLocation) {
@@ -225,9 +233,6 @@ extension ViewController {
                     print("[mwCamera]: Error locking configuration")
                 }
             }
-
-//            let settings = [(kCVPixelBufferPixelFormatTypeKey as String) : NSNumber(value: kCVPixelFormatType_32BGRA as UInt32)]
-//            self.videoOutput?.videoSettings = settings
 
             if self.isSessionRunning != true {
                 self.beginSession()

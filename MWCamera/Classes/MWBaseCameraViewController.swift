@@ -13,10 +13,15 @@ public typealias MWCameraLocation = AVCaptureDevice.Position
 
 open class MWBaseCameraViewController: UIViewController {
     // MARK: Private Declarations
-    private let sessionQueueIdentifier = "mwCamera_sessionQueue"
-    private let sessionQueueSpecificKey = DispatchSpecificKey<()>()
+    private let sessionPrimaryQueueIdentifier = "mwCamera_sessionPrimaryQueue"
+    private let sessionPrimaryQueueSpecificKey = DispatchSpecificKey<()>()
     // Serial queue used for setting up session
-    private var sessionQueue: DispatchQueue
+    private var sessionPrimaryQueue: DispatchQueue
+    //
+    private let sessionSecondaryQueueIdentifier = "mwCamera_sessionSecondaryQueue"
+    private let sessionSecondaryQueueSpecificKey = DispatchSpecificKey<()>()
+    // Serial queue used for setting up session
+    private var sessionSecondaryQueue: DispatchQueue
     // Variable
     private var lastZoomScale = CGFloat(1.0)
     //
@@ -105,10 +110,14 @@ open class MWBaseCameraViewController: UIViewController {
     public var isRecording: Bool {
         return self.didStartWritingSession
     }
+    // allow background audio from other applications to continue playing during capture
+    public var allowsBackgroundAudio = true
 
     public init() {
-        self.sessionQueue = DispatchQueue(
-                label: self.sessionQueueIdentifier, qos: .userInitiated, target: DispatchQueue.global())
+        self.sessionPrimaryQueue = DispatchQueue(
+                label: self.sessionPrimaryQueueIdentifier, qos: .userInitiated, target: DispatchQueue.global())
+        self.sessionSecondaryQueue = DispatchQueue(
+            label: self.sessionSecondaryQueueIdentifier, qos: .utility, target: DispatchQueue.global())
 
         super.init(nibName: nil, bundle: nil)
 
@@ -116,7 +125,8 @@ open class MWBaseCameraViewController: UIViewController {
         self.addSessionObservers()
         self.addSystemObervers()
 
-        self.sessionQueue.setSpecific(key: self.sessionQueueSpecificKey, value: ())
+        self.sessionPrimaryQueue.setSpecific(key: self.sessionPrimaryQueueSpecificKey, value: ())
+        self.sessionSecondaryQueue.setSpecific(key: self.sessionSecondaryQueueSpecificKey, value: ())
 
         self.session.automaticallyConfiguresApplicationAudioSession = false
     }
@@ -147,7 +157,7 @@ extension MWBaseCameraViewController {
 
         self.configureFrameRate()
     }
-    /// Fixing framerate does effect lowlight light capture performance
+    /// Fixing framerate does effect low light capture performance
     /// Todo: Make this functionality optional.
     private func configureFrameRate(toframeRate: Int? = nil) {
         guard let videoDevice = captureDevice else {
@@ -201,22 +211,21 @@ extension MWBaseCameraViewController {
     }
 
     private func addVideoInput() {
-        captureDevice = AVCaptureDevice.DiscoverySession(
+        self.captureDevice = AVCaptureDevice.DiscoverySession(
             deviceTypes: [captureDeviceType], mediaType: AVMediaType.video, position: cameraLocation).devices.first
 
-        removeSystemObservers()
-        addSystemObervers()
+        self.removeSystemObservers()
+        self.addSystemObervers()
 
-        guard let videoDevice = captureDevice else {
+        guard let videoDevice = self.captureDevice else {
             print("[mwCamera]: Could not add video device input to the session")
             return
         }
 
         do {
             let videoDeviceInput = try AVCaptureDeviceInput(device: videoDevice)
-
-            if session.canAddInput(videoDeviceInput) {
-                session.addInput(videoDeviceInput)
+            if self.session.canAddInput(videoDeviceInput) {
+                self.session.addInput(videoDeviceInput)
                 self.videoInput = videoDeviceInput
             } else {
                 print("[mwCamera]: Could not add video device input to the session")
@@ -228,9 +237,9 @@ extension MWBaseCameraViewController {
 
     private func addVideoOutput() {
         let dataOutput = AVCaptureVideoDataOutput.init()
-        dataOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
-        
-        if session.canAddOutput(dataOutput) {
+        dataOutput.setSampleBufferDelegate(self, queue: self.sessionSecondaryQueue)
+
+        if self.session.canAddOutput(dataOutput) {
             self.session.addOutput(dataOutput)
         }
 
@@ -248,10 +257,9 @@ extension MWBaseCameraViewController {
             return
         }
         do {
-
             let audioDeviceInput = try AVCaptureDeviceInput(device: audioDevice)
-            if session.canAddInput(audioDeviceInput) {
-                session.addInput(audioDeviceInput)
+            if self.session.canAddInput(audioDeviceInput) {
+                self.session.addInput(audioDeviceInput)
                 self.audioInput = audioDeviceInput
             } else {
                 print("[mwCamera]: Could not add audio device input to the session")
@@ -263,9 +271,9 @@ extension MWBaseCameraViewController {
 
     private func addAudioOutput() {
         let dataOutput = AVCaptureAudioDataOutput.init()
-        dataOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
+        dataOutput.setSampleBufferDelegate(self, queue: self.sessionSecondaryQueue)
 
-        if session.canAddOutput(dataOutput) {
+        if self.session.canAddOutput(dataOutput) {
             self.session.addOutput(dataOutput)
             self.audioOutput = dataOutput
         }
@@ -284,14 +292,35 @@ extension MWBaseCameraViewController {
     }
 }
 
+extension MWBaseCameraViewController {
+    @objc open func setPreviousBackgroundAudioPreference() {}
+
+    private func setBackgroundAudioPreference() {
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            var options: AVAudioSession.CategoryOptions = [
+                .allowBluetooth, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
+
+            if allowsBackgroundAudio {
+                options.insert(.mixWithOthers)
+            }
+
+            try audioSession.setActive(false)
+            try audioSession.setCategory(
+                AVAudioSession.Category.playAndRecord, mode: AVAudioSession.Mode.videoRecording, options: options)
+            try audioSession.setActive(true)
+
+        } catch {
+            print("[mwCamera]: Failed to set background audio preference \(error.localizedDescription)")
+        }
+    }
+}
+
 @objc public extension MWBaseCameraViewController {
     // MARK: Public Functions
     /// Starts the AVCaptureSession.
     func beginSession() {
-        assert(Thread.isMainThread, "[mwCamera]: This function -beginSession should be called on the main thread.")
-        self.executeAsync { [weak self] in
-            self?.session.startRunning()
-        }
+        self.session.startRunning()
     }
 
     func endSession() {
@@ -309,8 +338,8 @@ extension MWBaseCameraViewController {
 
             self.addVideoInput()
             self.addVideoOutput()
-            //self.addAudioInput()
-            //self.addAudioOutput()
+//            self.addAudioInput()
+            self.addAudioOutput()
 
             self.configureSessionQuality()
 
@@ -327,7 +356,7 @@ extension MWBaseCameraViewController {
                 !self.willStartWritingSession && !self.shouldStartWritingSession,
                 "[mwCamera]: Called startRecording() when already recording.")
             self.willStartWritingSession = true
-            
+
             self.shouldCreateAssetWriter()
 
             let uuid = UUID().uuidString
@@ -344,7 +373,7 @@ extension MWBaseCameraViewController {
             }
 
             guard let assetWriter = self.assetWriter else { fatalError("asset writer is nil") }
-            
+
             let videoCompressionSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.hevc,
                 AVVideoWidthKey: 720,
@@ -391,11 +420,12 @@ extension MWBaseCameraViewController {
                 self.willBeginRecordingVideo()
             }
 
+            self.setBackgroundAudioPreference()
             // Adding audio her is necessary to mimic Snapchat/Instagram camera
-            self.session.beginConfiguration()
+            //self.session.beginConfiguration()
             self.addAudioInput()
-            self.addAudioOutput()
-            self.session.commitConfiguration()
+            //self.addAudioOutput()
+            //self.session.commitConfiguration()
 
             self.shouldStartWritingSession = true
             self.willStartWritingSession = false
@@ -418,10 +448,11 @@ extension MWBaseCameraViewController {
             self.assetWriterVideoInput?.markAsFinished()
             self.assetWriterAudioInput?.markAsFinished()
             // Must remove audio after recording in order to mimic Snapchat/Instagram camera
-            self.session.beginConfiguration()
+            //self.session.beginConfiguration()
             self.removeAudioInput()
-            self.removeAudioOutput()
-            self.session.commitConfiguration()
+            //self.removeAudioOutput()
+            //self.session.commitConfiguration()
+            self.setPreviousBackgroundAudioPreference()
 
             DispatchQueue.main.async {
                 self.didFinishRecordingVideo()
@@ -430,7 +461,7 @@ extension MWBaseCameraViewController {
             assetWriter.finishWriting {
                 DispatchQueue.main.async {
                     if let error = assetWriter.error {
-                        self.didFailToRecordVideo(error)
+                        self.didFailToProcessVideo(error)
                     } else {
                         self.didFinishProcessingVideoAt(assetWriter.outputURL)
                     }
@@ -458,13 +489,15 @@ extension MWBaseCameraViewController {
 
             let url = assetWriter.outputURL
 
-            // Must remove audio after recording in order to mimic Snapchat/Instagram camera
-            self.session.beginConfiguration()
-            self.removeAudioInput()
-            self.removeAudioOutput()
-            self.session.commitConfiguration()
-
             assetWriter.cancelWriting()
+
+            // Must remove audio after recording in order to mimic Snapchat/Instagram camera
+            //self.session.beginConfiguration()
+            self.removeAudioInput()
+            //self.removeAudioOutput()
+            //self.session.commitConfiguration()
+            self.setPreviousBackgroundAudioPreference()
+
             DispatchQueue.main.async {
                 self.didCancelRecording(at: url)
             }
@@ -474,11 +507,19 @@ extension MWBaseCameraViewController {
             self.assetWriterVideoInput = nil
         }
     }
-    /// Caputures a photo using AVCaptureVideoDataOutput
-    func capturePhoto() {
-        fatalError("capturePhoto is not yet supported.")
-        //assert(Thread.isMainThread, "[mwCamera]: This function -capturePhoto must be called on the main thread.")
-        executeSync {
+    /// Caputures a photo using AVCaptureVideoDataOutput after the specified number of seconds. defaults to right now.
+    func capturePhoto(after deadline: TimeInterval = 0) {
+
+        if Thread.isMainThread {
+            self.willCaptureImage()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.willCaptureImage()
+            }
+        }
+
+        executeAsync {
+            Thread.sleep(forTimeInterval: deadline)
             self.shouldCapturePhotoFromDataOutput = true
         }
     }
@@ -502,7 +543,7 @@ extension MWBaseCameraViewController {
 
             self.addVideoInput()
             self.configureSessionQuality()
-            
+
             // Fix initial frame having incorrect orientation
             let connection = self.videoOutput?.connection(with: .video)
             if connection?.isVideoOrientationSupported == true {
@@ -526,26 +567,12 @@ extension MWBaseCameraViewController {
             self.isSwitchingCameras = false
         }
     }
-
-    /// Freezes the live camera preview layer.
-    func freezePreview() {
-        if let previewConnection = self.captureView.videoPreviewLayer.connection {
-            previewConnection.isEnabled = false
-        }
-    }
-
-    /// Un-freezes the live camera preview layer.
-    func unfreezePreview() {
-        if let previewConnection = self.captureView.videoPreviewLayer.connection {
-            previewConnection.isEnabled = true
-        }
-    }
 }
 
 @objc internal extension MWBaseCameraViewController {
     //
     func shouldCreateAssetWriter() {
-        
+
     }
     ///
     func willBeginRecordingVideo() {
@@ -560,7 +587,7 @@ extension MWBaseCameraViewController {
         }
     }
     ///
-    func didBeginRecordingVideoAt() {
+    func didBeginRecordingVideo() {
 
     }
     ///
@@ -578,7 +605,7 @@ extension MWBaseCameraViewController {
         }
     }
     ///
-    func didFailToRecordVideo(_ error: Error) {
+    func didFailToProcessVideo(_ error: Error) {
         if let currentBackgroundTaskID = backgroundTaskID {
             backgroundTaskID = UIBackgroundTaskIdentifier.invalid.rawValue
 
@@ -595,6 +622,18 @@ extension MWBaseCameraViewController {
     func didCancelRecording(at url: URL) {
 
     }
+    ///
+    func willCaptureImage() {
+
+    }
+    ///
+    func didCaptureImage() {
+
+    }
+    ///
+    func didFinishProcessing(image: UIImage, with properties: CFDictionary) {
+
+    }
 }
 
 extension MWBaseCameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate,
@@ -607,10 +646,28 @@ extension MWBaseCameraViewController: AVCaptureVideoDataOutputSampleBufferDelega
 
     public func captureOutput(
         _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        
+
         if self.shouldCapturePhotoFromDataOutput {
             self.shouldCapturePhotoFromDataOutput = false
-            
+
+            let isDataReady = CMSampleBufferDataIsReady(sampleBuffer)
+            guard isDataReady else {
+                print("[mwCamera]: SampleBuffer was not ready")
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                self?.didCaptureImage()
+            }
+
+            guard let cgImage = self.cgImage(from: sampleBuffer) else { return }
+            let size = UIScreen.main.bounds.size
+            guard let image = UIImage.init(cgImage: cgImage).scaled(toHeight: size.height) else { return }
+            let properties = metadata(from: sampleBuffer)
+
+            DispatchQueue.main.async { [weak self] in
+                self?.didFinishProcessing(image: image, with: properties)
+            }
         }
 
         guard self.shouldStartWritingSession else { return }
@@ -625,7 +682,7 @@ extension MWBaseCameraViewController: AVCaptureVideoDataOutputSampleBufferDelega
             assetWriter.startSession(atSourceTime: presentationTimestamp)
             self.didStartWritingSession = true
             DispatchQueue.main.async {
-                self.didBeginRecordingVideoAt()
+                self.didBeginRecordingVideo()
             }
             self.startingPresentationTimeStamp = presentationTimestamp
             self.previousPresentationTimeStamp = presentationTimestamp
@@ -703,130 +760,121 @@ extension MWBaseCameraViewController: AVCaptureVideoDataOutputSampleBufferDelega
 }
 
 extension MWBaseCameraViewController {
-    // Here is the code that convert an kCVPixelFormatType_32BGRA CMSampleBuffer to an
-    // UIImage the key things is the bitmapInfo that must correspond to 32BGRA 32
-    // little with premultfirst and alpha info :
-    private func imageFromSampleBuffer(sampleBuffer: CMSampleBuffer) -> UIImage {
-        // Get a CMSampleBuffer's Core Video image buffer for the media data
-        let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
-        // Lock the base address of the pixel buffer
-        CVPixelBufferLockBaseAddress(imageBuffer!, CVPixelBufferLockFlags.readOnly)
-        
-        // Get the number of bytes per row for the pixel buffer
-        let baseAddress = CVPixelBufferGetBaseAddress(imageBuffer!)
-        
-        // Get the number of bytes per row for the pixel buffer
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer!)
-        // Get the pixel buffer width and height
-        let width = CVPixelBufferGetWidth(imageBuffer!)
-        let height = CVPixelBufferGetHeight(imageBuffer!)
-        
-        // Create a device-dependent RGB color space
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        
-        // Create a bitmap graphics context with the sample buffer data
-        var bitmapInfo: UInt32 = CGBitmapInfo.byteOrder32Little.rawValue
-        bitmapInfo |= CGImageAlphaInfo.premultipliedFirst.rawValue & CGBitmapInfo.alphaInfoMask.rawValue
-        //let bitmapInfo: UInt32 = CGBitmapInfo.alphaInfoMask.rawValue
-        let context = CGContext.init(
-            data: baseAddress, width: width, height: height, bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo)
-        // Create a Quartz image from the pixel data in the bitmap graphics context
-        let quartzImage = context?.makeImage()
-        // Unlock the pixel buffer
-        CVPixelBufferUnlockBaseAddress(imageBuffer!, CVPixelBufferLockFlags.readOnly)
-        
-        // Create an image object from the Quartz image
-        let image = UIImage.init(cgImage: quartzImage!)
-        
-        return (image)
-    }
-    
-    private func cgimage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
+    private func cgImage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
         // Lock the base address of the pixel buffer
         CVPixelBufferLockBaseAddress(pixelBuffer, CVPixelBufferLockFlags.readOnly)
         let ciImage = CIImage.init(cvPixelBuffer: pixelBuffer)
-        //let tran = ciImage.transformed(by: CGAffineTransform.init(scaleX: 1.0, y: 1.0))
-        
-        // Get the pixel buffer width and height
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let rect = CGRect(x: 0, y: 0, width: width, height: height)
         let context = CIContext.init()
         let cgimage = context.createCGImage(ciImage, from: ciImage.extent)
         // Unlock the pixel buffer
         CVPixelBufferUnlockBaseAddress(pixelBuffer, CVPixelBufferLockFlags.readOnly)
         return cgimage
     }
-    
-    private func saveAsHeic(sampleBuffer: CMSampleBuffer) {
-        print("here!!")
-        //let image = imageFromSampleBuffer(sampleBuffer: sampleBuffer)
-        
-        //            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        //            let ciImage = CIImage.init(cvPixelBuffer: pixelBuffer)
-        //            ciImage.orientationTransform(for: CGImagePropertyOrientation.up)
+
+    private func metadata(from sampleBuffer: CMSampleBuffer) -> NSMutableDictionary {
+        let rawMetadata = CMCopyDictionaryOfAttachments(
+            allocator: nil, target: sampleBuffer, attachmentMode: CMAttachmentMode(kCMAttachmentMode_ShouldPropagate))
+        let metadata = CFDictionaryCreateMutableCopy(nil, 0, rawMetadata) as NSMutableDictionary
+        return metadata
+    }
+
+    private func metadata(from url: URL) {
+        if let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) {
+            let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil)
+            if let dict = imageProperties as? [String: Any] {
+                print(dict)
+            }
+
+            guard let imageMetadata = CGImageSourceCopyMetadataAtIndex(imageSource, 0, .none) else {
+                return
+            }
+
+            guard let tags = CGImageMetadataCopyTags(imageMetadata) else {
+                return
+            }
+            // swiftlint:disable force_cast
+            var result = [String: Any]()
+            for tag in tags as NSArray {
+                let tagMetadata = tag as! CGImageMetadataTag
+                if let cfName = CGImageMetadataTagCopyName(tagMetadata) {
+                    let name = String(cfName)
+                    let value = CGImageMetadataTagCopyValue(tagMetadata)
+                    result[name] = value
+                }
+            }
+
+            // swiftlint:enable force_cast
+
+            print(result)
+        }
+    }
+    public func createData(
+        from cgImage: CGImage, fileType: AVFileType, quality: CGFloat,
+        properties: NSMutableDictionary = NSMutableDictionary()) -> Data? {
+
+        let imageData = NSMutableData()
+        let numberOfImages = 1
+        guard let destination = CGImageDestinationCreateWithData(
+            imageData as CFMutableData, fileType as CFString, numberOfImages, nil) else { return nil }
+
+        let options = [kCGImageDestinationLossyCompressionQuality: quality]
+        properties.addEntries(from: options)
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+        CGImageDestinationFinalize(destination)
+
+        return imageData as Data
+    }
+
+    public func save(
+        cgImage: CGImage, fileType: AVFileType, quality: CGFloat,
+        properties: NSMutableDictionary = NSMutableDictionary()) -> URL? {
+
         let uuid = UUID().uuidString
-        let fileType = AVFileType.heic
         assert(fileType.isImageFileTypeSupported, "fileType is not supported for video")
         let outputFileName = (uuid as NSString).appendingPathExtension(fileType.stringValue())!
         let outputFileUrl = self.outputFileDirectory.appendingPathComponent(outputFileName, isDirectory: false)
-        //
-        //            //CIContext.init().writeJPEGRepresentation(of: <#T##CIImage#>, to: <#T##URL#>, colorSpace: <#T##CGColorSpace#>, options: <#T##[CIImageRepresentationOption : Any]#>)
-        //            //CIContext.init().writeHEIFRepresentation(of: <#T##CIImage#>, to: <#T##URL#>, format: , colorSpace: ciImage.colorSpace, options: [:])
-        //            do {
-        //                let context = CIContext.init()
-        //                try context.writeHEIFRepresentation(of: ciImage, to: outputFileUrl, format: CIFormat.RGBA8, colorSpace: ciImage.colorSpace!, options: [:])
-        //            } catch {
-        //                print("[mwCamera]: error: \(error as Any)")
-        //            }
-        
-        let isDataReady = CMSampleBufferDataIsReady(sampleBuffer)
-        guard isDataReady else {
-            return
+
+        //var qual = quality
+        //let compression = CFNumberCreate(kCFAllocatorDefault, CFNumberType.floatType, &qual)
+        let numberOfImages = 1
+        guard let destination = CGImageDestinationCreateWithURL(
+            outputFileUrl as CFURL, fileType as CFString, numberOfImages, nil)
+            else { return nil }
+        let options = [kCGImageDestinationLossyCompressionQuality: quality]
+        properties.addEntries(from: options)
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+
+        guard CGImageDestinationFinalize(destination) else { return nil }
+
+        return outputFileUrl
+    }
+}
+
+private extension UIImage {
+    func scaled(toWidth width: CGFloat) -> UIImage? {
+        let oldWidth = self.size.width
+        let scaleFactor = width / oldWidth
+        let newHeight = self.size.height * scaleFactor
+        let newWidth = oldWidth * scaleFactor
+        let newSize = CGSize(width: newWidth, height: newHeight)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let newImage = renderer.image { _ in
+            self.draw(in: CGRect.init(origin: CGPoint.zero, size: newSize))
         }
-        
-        //            if connection.isVideoOrientationSupported {
-        //                connection.videoOrientation = .portrait//orientation
-        //            }
-        
-        
-        guard let cgImage = self.cgimage(from: sampleBuffer) else { return }
-        //guard let correctOrientationCGImage = self.createMatchingBackingDataWithImage(imageRef: cgImage, orienation: UIImage.Orientation.left) else { return }
-        
-        
-        guard let heifDest = CGImageDestinationCreateWithURL(outputFileUrl as CFURL, fileType as CFString, 1, nil) else { return }
-        let quality: CGFloat = 1.0
-        
-//        CGImageDestination
-//
-//        CGImageMetadata
-//        CGImageDestinationAddImageAndMetadata.(T##idst: CGImageDestination##CGImageDestination,
-//        T##image: CGImage##CGImage, T##metadata: CGImageMetadata?##CGImageMetadata?, <#T##options: CFDictionary?##CFDictionary?#>)
-//        let options: CFDictionary = CFDictionary() [kCGImageDestinationLossyCompressionQuality:quality]
-//        CGImageDestinationAddImage(heifDest, cgImage, options)
-//        if CGImageDestinationFinalize(heifDest) == false {
-//            print("Failure writing HEIF")
-//            return
-//        }
-        
-        print("[mwCamera]: success")
-        
-        let image = UIImage.init(cgImage: cgImage)//UIImage(named: outputFileUrl.path)
-        DispatchQueue.main.async {
-            let imageView = UIImageView.init(image: image)
-            imageView.contentMode = .scaleAspectFit
-            imageView.sizeToFit()
-            
-            imageView.center = self.view.center
-            
-            self.view.addSubview(imageView)
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                imageView.removeFromSuperview()
-            }
+        return newImage
+    }
+
+    func scaled(toHeight height: CGFloat) -> UIImage? {
+        let scale = height / self.size.height
+        let newWidth = self.size.width * scale
+        let newSize = CGSize(width: newWidth, height: height)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let newImage = renderer.image { _ in
+            self.draw(in: CGRect.init(origin: CGPoint.zero, size: newSize))
         }
+
+        return newImage
     }
 }
 
@@ -916,7 +964,7 @@ extension MWBaseCameraViewController {
             case .deviceIsNotAvailableInBackground:
                 print("Media services are not available in the background")
             case .mediaServicesWereReset:
-                print("Were reset")
+                print("Media services were reset")
                 //self.session.startRunning()
             default:
                 break
@@ -938,15 +986,15 @@ extension MWBaseCameraViewController {
 }
 
 extension MWBaseCameraViewController {
-    internal func executeAsync(_ closure: @escaping () -> Void) {
-        self.sessionQueue.async(execute: closure)
+    func executeAsync(_ closure: @escaping () -> Void) {
+        self.sessionPrimaryQueue.async(execute: closure)
     }
 
-    internal func executeSync(withClosure closure: @escaping () -> Void) {
-        if DispatchQueue.getSpecific(key: self.sessionQueueSpecificKey) != nil {
+    func executeSync(withClosure closure: @escaping () -> Void) {
+        if DispatchQueue.getSpecific(key: self.sessionPrimaryQueueSpecificKey) != nil {
             closure()
         } else {
-            self.sessionQueue.sync(execute: closure)
+            self.sessionPrimaryQueue.sync(execute: closure)
         }
     }
 }
@@ -991,11 +1039,11 @@ private extension AVFileType {
         }
         return string
     }
-    
+
     var isImageFileTypeSupported: Bool {
         return self == .heic || self == .jpg || self == .tif
     }
-    
+
     var isVideoFileTypeSupported: Bool {
         return self == .mov || self == .mp4 || self == .mobile3GPP || self == .mobile3GPP2
     }

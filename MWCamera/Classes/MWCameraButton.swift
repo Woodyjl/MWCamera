@@ -30,7 +30,12 @@ open class MWCameraButton: UIView {
         self.isEnabled = true
         super.init(frame: .zero)
         self.isUserInteractionEnabled = true
+    }
 
+    public override init(frame: CGRect) {
+        self.isEnabled = true
+        super.init(frame: frame)
+        self.isUserInteractionEnabled = true
     }
 
     required public init?(coder aDecoder: NSCoder) {

@@ -78,7 +78,7 @@ If you didn't know, Apple requires the additon of the `NSCameraUsageDescription`
 If you install MWCamera from Cocoapods, be sure to import the module at the top of the file.
 
 ```swift
-import SwiftyCam
+import MWCamera
 ```
 
 
@@ -102,7 +102,7 @@ if let device = self?.captureDevice {
         try device.lockForConfiguration()
         if device.isFocusModeSupported(.continuousAutoFocus) {
             device.focusMode = .continuousAutoFocus
-            }
+        }
 
         if device.isSmoothAutoFocusSupported {
             device.isSmoothAutoFocusEnabled = true
@@ -146,14 +146,20 @@ func stopRecording() {}
 
 func cancelRecording() {}
 
-func capturePhoto() {} // In development
+func capturePhoto() {}
 ```
 
 To be alerted on what's going on set an MWCameraDelegate. For photo capture notifications MWCamera already implements the AVCapturePhotoCaptureDelegate so you can just override those functions. Please make sure to call super in order keep MWCamera functioning correctly.
 
 **One More Thing!**
 
-MWCameraButton 
+MWCameraButton is a throw in view that makes setting up an instagram/snapchat camera app even easier. Just three lines:
+
+```swift
+let captureButton = MWCameraButton()
+self.register(captureButton)
+view.addSubview(captureButton)
+```
 
 ### 📚 Documentation
 Coming soon...😅?
@@ -167,8 +173,7 @@ Coming soon...😅?
 
 ## 📬 Next steps
 
-* [x] Capture image while recording
-* [ ] Better documentation
+* [x] Better documentation
 * [ ] Smooth zooming from button
 * [ ] Less intruisive and tailorable logs
 * [ ] AR Examples like Snap/Insta filters
