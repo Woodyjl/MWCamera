@@ -31,6 +31,7 @@ extension CameraViewController {
         self.videoQuality = .high
         self.videoGravity = .resizeAspectFill
         self.maxZoomScale = 10.0
+        self.zoomPanMaxLength = view.bounds.height / 1.5
 
         self.register(self.captureButton)
         captureButton.translatesAutoresizingMaskIntoConstraints = false

@@ -298,16 +298,16 @@ extension MWBaseCameraViewController {
     private func setBackgroundAudioPreference() {
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            var options: AVAudioSession.CategoryOptions = [
-                .allowBluetooth, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
+            var options: AVAudioSession.CategoryOptions = AVAudioSession.CategoryOptions.init()
 
-            if allowsBackgroundAudio {
+            if audioSession.isOtherAudioPlaying && self.allowsBackgroundAudio {
                 options.insert(.mixWithOthers)
+                try audioSession.setActive(false)
             }
 
-            try audioSession.setActive(false)
             try audioSession.setCategory(
-                AVAudioSession.Category.playAndRecord, mode: AVAudioSession.Mode.videoRecording, options: options)
+                AVAudioSession.Category.playAndRecord,
+                mode: AVAudioSession.Mode.videoRecording, options: options)
             try audioSession.setActive(true)
 
         } catch {
@@ -374,11 +374,18 @@ extension MWBaseCameraViewController {
 
             guard let assetWriter = self.assetWriter else { fatalError("asset writer is nil") }
 
-            let videoCompressionSettings: [String: Any] = [
-                AVVideoCodecKey: AVVideoCodecType.hevc,
-                AVVideoWidthKey: 720,
-                AVVideoHeightKey: 1280
-            ]
+            self.setBackgroundAudioPreference()
+            // Adding audio her is necessary to mimic Snapchat/Instagram camera
+            //self.session.beginConfiguration()
+            self.addAudioInput()
+            //self.addAudioOutput()
+            //self.session.commitConfiguration()
+
+            var videoCompressionSettings = self.videoOutput?.recommendedVideoSettingsForAssetWriter(
+                writingTo: assetWriter.outputFileType)
+            var compressionProperties = videoCompressionSettings?[AVVideoCompressionPropertiesKey] as? [String: Any]
+            compressionProperties?[AVVideoExpectedSourceFrameRateKey] = self.frameRate
+            videoCompressionSettings?[AVVideoCompressionPropertiesKey] = compressionProperties
             let assetWriterVideoInput = self.assetWriterVideoInput ?? AVAssetWriterInput(
                 mediaType: AVMediaType.video, outputSettings: videoCompressionSettings)
             assetWriterVideoInput.expectsMediaDataInRealTime = true
@@ -392,16 +399,10 @@ extension MWBaseCameraViewController {
             self.assetWriterVideoInput = assetWriterVideoInput
 
             if self.isAudioEnabled {
-                // Audio Settings
-                //        let audioSettings : [String : Any] = [
-                //            AVFormatIDKey : kAudioFormatMPEG4AAC,
-                //            AVSampleRateKey : 44100,
-                //            AVEncoderBitRateKey : 64000,
-                //            AVNumberOfChannelsKey: 1
-                //        ]
-                let audioSettings: [String: Any]? = nil
+                let audioCompressionSettings = self.audioOutput?.recommendedAudioSettingsForAssetWriter(
+                    writingTo: assetWriter.outputFileType) as? [String: Any]
                 let assetWriterAudioInput = self.assetWriterAudioInput ?? AVAssetWriterInput(
-                    mediaType: AVMediaType.audio, outputSettings: audioSettings)
+                    mediaType: AVMediaType.audio, outputSettings: audioCompressionSettings)
                 assetWriterAudioInput.expectsMediaDataInRealTime = true
                 if assetWriter.canAdd(assetWriterAudioInput) {
                     assetWriter.add(assetWriterAudioInput)
@@ -419,13 +420,6 @@ extension MWBaseCameraViewController {
             DispatchQueue.main.async {
                 self.willBeginRecordingVideo()
             }
-
-            self.setBackgroundAudioPreference()
-            // Adding audio her is necessary to mimic Snapchat/Instagram camera
-            //self.session.beginConfiguration()
-            self.addAudioInput()
-            //self.addAudioOutput()
-            //self.session.commitConfiguration()
 
             self.shouldStartWritingSession = true
             self.willStartWritingSession = false
@@ -650,32 +644,13 @@ extension MWBaseCameraViewController: AVCaptureVideoDataOutputSampleBufferDelega
         if self.shouldCapturePhotoFromDataOutput {
             self.shouldCapturePhotoFromDataOutput = false
 
-            let isDataReady = CMSampleBufferDataIsReady(sampleBuffer)
-            guard isDataReady else {
-                print("[mwCamera]: SampleBuffer was not ready")
-                return
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                self?.didCaptureImage()
-            }
-
-            guard let cgImage = self.cgImage(from: sampleBuffer) else { return }
-            let size = UIScreen.main.bounds.size
-            guard let image = UIImage.init(cgImage: cgImage).scaled(toHeight: size.height) else { return }
-            let properties = metadata(from: sampleBuffer)
-
-            DispatchQueue.main.async { [weak self] in
-                self?.didFinishProcessing(image: image, with: properties)
-            }
+            self.handlePhotoCapture(sampleBuffer)
         }
 
         guard self.shouldStartWritingSession else { return }
 
         let isDataReady = CMSampleBufferDataIsReady(sampleBuffer)
-        guard isDataReady, let assetWriter = self.assetWriter else {
-            return
-        }
+        guard isDataReady, let assetWriter = self.assetWriter else { return }
 
         if !self.didStartWritingSession {
             let presentationTimestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -690,18 +665,52 @@ extension MWBaseCameraViewController: AVCaptureVideoDataOutputSampleBufferDelega
 
         guard self.isRecording else { return }
 
+        if output == self.audioOutput {
+            self.handleAudioBuffer(sampleBuffer)
+        }
+
+        if output == self.videoOutput {
+            self.handleVideoBuffer(sampleBuffer)
+        }
+    }
+
+    private func handlePhotoCapture(_ sampleBuffer: CMSampleBuffer) {
+        let isDataReady = CMSampleBufferDataIsReady(sampleBuffer)
+        guard isDataReady else {
+            print("[mwCamera]: SampleBuffer was not ready")
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.didCaptureImage()
+        }
+
+        guard let cgImage = self.cgImage(from: sampleBuffer) else { return }
+        let size = UIScreen.main.bounds.size
+        guard let image = UIImage.init(cgImage: cgImage).scaled(toHeight: size.height) else { return }
+        let properties = metadata(from: sampleBuffer)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.didFinishProcessing(image: image, with: properties)
+        }
+    }
+
+    private func handleAudioBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard let assetWriter = self.assetWriter else { return }
         if let assetWriterAudioInput = self.assetWriterAudioInput,
-            output == self.audioOutput, assetWriterAudioInput.isReadyForMoreMediaData {
+            assetWriterAudioInput.isReadyForMoreMediaData {
             let success = assetWriterAudioInput.append(sampleBuffer)
             if !success, let error = assetWriter.error {
                 print(error)
                 fatalError(error.localizedDescription)
             }
         }
+    }
 
+    private func handleVideoBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard let assetWriter = self.assetWriter else { return }
         if let assetWriterInputPixelBufferAdator = self.assetWriterInputPixelBufferAdator,
             let assetWriterVideoInput = self.assetWriterVideoInput,
-            output == self.videoOutput,
             assetWriterVideoInput.isReadyForMoreMediaData,
             let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
 
@@ -722,7 +731,6 @@ extension MWBaseCameraViewController: AVCaptureVideoDataOutputSampleBufferDelega
                 let expectedFramePosition = previousFramePosition + 1.0
 //                print(
 //                    "[mwCamera]: Frame at incorrect position moving from \(currentFramePosition) to \(expectedFramePosition)")
-
                 let newFramePosition =
                     (expectedFramePosition * Double(currentPresentationTimestamp.timescale)) / Double(self.frameRate)
 

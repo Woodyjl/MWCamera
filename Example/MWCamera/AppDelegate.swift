@@ -29,10 +29,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let audioSession = AVAudioSession.sharedInstance()
         do {
             let options: AVAudioSession.CategoryOptions = [
-                .mixWithOthers
+                .mixWithOthers//, .allowBluetooth, .allowBluetoothA2DP, .allowAirPlay
             ]
-            try audioSession.setActive(false)
-            try audioSession.setCategory(AVAudioSession.Category.playback, options: options)
+
+            try audioSession.setCategory(
+                AVAudioSession.Category.playback,
+                mode: AVAudioSession.Mode.default, options: options)
             try audioSession.setActive(true)
         } catch {
             print(error)

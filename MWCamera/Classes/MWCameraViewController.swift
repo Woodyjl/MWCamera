@@ -151,20 +151,15 @@ extension MWCameraViewController {
         guard let videoDevice = captureDevice, !self.isZoomLocked else { return }
         do {
             try videoDevice.lockForConfiguration()
-            let previousFactor = videoDevice.videoZoomFactor
-            let distance = abs(factor - previousFactor)
-            if distance > 1.0 && rate > 0 {
-                videoDevice.ramp(toVideoZoomFactor: factor, withRate: rate)
-            } else {
-                videoDevice.videoZoomFactor = factor
-            }
+
+            videoDevice.videoZoomFactor = factor
+
             videoDevice.unlockForConfiguration()
 
             // Call Delegate function with current zoom scale
             DispatchQueue.main.async {
                 self.delegate?.mwCamera?(self, didChangeZoomLevelTo: factor)
             }
-
         } catch {
             print("[mwCamera]: Error locking configuration")
         }
@@ -373,8 +368,13 @@ internal extension MWCameraViewController {
                 self.setFlash(to: .off)
             }
         }
+        
+        if self.shouldResetZoom {
+            self.zoom(to: self.startingZoomScale)
+            self.shouldResetZoom = false
+        }
 
-        //self.delegate?.mwCamera?(self, didCaptureImageAt: self.cameraLocation)
+        self.delegate?.mwCamera?(self, didCaptureImageAt: self.cameraLocation)
     }
 
     override func didFinishProcessing(image: UIImage, with properties: CFDictionary) {
